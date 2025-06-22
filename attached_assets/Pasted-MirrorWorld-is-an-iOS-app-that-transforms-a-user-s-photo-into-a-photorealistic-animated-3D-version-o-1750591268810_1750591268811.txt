@@ -1,0 +1,65 @@
+MirrorWorld is an iOS app that transforms a user’s photo into a photorealistic animated 3D version of themselves, placed inside a fixed, cinematic-quality Unity park scene. Unlike filters or avatars, this experience captures and preserves emotional realism—eye glints, body shifts, subtle micro-motions.
+
+It’s not a stylized cartoon—it’s you, but in 3D, breathing, blinking, alive in a virtual memory.
+
+⸻
+
+🧠 System Overview: How It All Works
+
+The app is made of two brain-halves:
+
+🧩 1. SwiftUI (Frontend Brain) • Handles onboarding, permissions, camera/photo upload. • Smooth transitions, privacy first, no lag, no confusion. • Sends the uploaded photo securely to the backend for AI transformation. • After generation, launches the Unity park scene embedded inside the app, where the user sees their animated 3D self.
+
+⚙️ 2. AI + Unity Engine (Backend Brain) • Processes the photo into a full 3D model using a custom RenderNet + PIKE-inspired AI pipeline. • Adds natural facial expressions, body breathing, eye motion. • Unity loads the lifelike 3D version into a high-end rendered park, using dynamic lighting, sound, and atmosphere.
+
+⸻
+
+🛠️ Step-by-Step Breakdown
+
+⸻
+
+1️⃣ USER FLOW — SwiftUI App
+
+Actions: • User opens the app → onboarding begins • SwiftUI walks them through steps: • Welcome + explanation • Camera/photo access permission • Upload or capture photo
+
+Tech Stack: • SwiftUI, PhotoKit, AVFoundation, LocalAuthentication (optional Face ID lock) • Combine for reactive state • URLSession for backend API communication
+
+Codex Jobs: • Write all SwiftUI components • Handle image selection/upload • Trigger backend upload + loading animation
+
+⸻
+
+2️⃣ AI PIPELINE — Photo → 3D
+
+Transformation Flow: 1. Segmentation: Person is extracted from background using MODNet or SAM. 2. Depth Estimation: Facial and body structure is estimated using MiDaS or ZoeDepth. 3. Mesh Generation: RenderNet + PIKE-style model reconstructs high-fidelity geometry and texture. 4. Motion Injection: Adds facial blendshapes, idle breathing, blinking, and slight movements. 5. Rigging & Export: Converts it into a GLB or FBX file with baked animation.
+
+Backend Infra: • FastAPI running in Docker • Hosted on GCP Cloud Run (or RunPod for GPU cost optimization) • Storage via Firebase Storage, AWS S3, or GCP Cloud Storage • Optional: Redis queue for task status and speed
+
+Codex Jobs: • Write FastAPI endpoints to receive image, process it, and serve 3D model • Set up Docker container with required ML models • Write mesh-to-FBX/GLB conversion script • Handle cloud infra with startup-eligible configs
+
+⸻
+
+3️⃣ RENDERING — Unity 3D Park Scene
+
+Scene Design: • One cinematic park scene (trees, wind, birds, sunlight, ambient sound) • Your 3D self is placed on a bench or standing near a pond • Unity camera glides slowly, or user can rotate view
+
+Tech Stack: • Unity HDRP for ultra-real lighting • Model loaded dynamically using UnityWebRequest or AssetBundles • Unity embedded as a library inside iOS
+
+Character Features: • Skin shaders with SSS (Subsurface Scattering) • Eye reflections, blink animations • Slight chest movement (breathing) • Idle pose looped from neural estimation
+
+Codex Jobs: • Write Unity C# loader to fetch and render user model • Build camera path script • Add particle systems for wind, leaves, etc. • Write interface for Unity ↔ SwiftUI communication
+
+⸻
+
+🔐 Privacy and Safety • All images encrypted in transit via HTTPS • Option to delete all user data immediately • Local face ID protection for viewing scene • GDPR-style consent for processing
+
+⸻
+
+🚀 Scalable Deployment Strategy
+
+Cloud Services: • Compute: GCP Cloud Run or RunPod GPU • Model Hosting: Hugging Face Transformers or custom Docker registry • Storage: Firebase, S3, or GCP Storage • Database: Firestore or Supabase (optional)
+
+Dev Tools: • Codex GPT-4 generates all code logic • GitHub + CI/CD pipeline to deploy iOS and backend • Firebase Crashlytics and Sentry for error tracking
+
+⸻
+
+🧪 Optional Future Modules • Add voice recording → sync lip movement (NVIDIA Audio2Face) • Export Unity video as a keepsake • In-app purchase to add multiple scenes or emotions • Multi-person support (e.g., add a lost loved one from a second photo)
