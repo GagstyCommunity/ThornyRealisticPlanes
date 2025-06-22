@@ -2,6 +2,7 @@
 import SwiftUI
 import PhotosUI
 import AVFoundation
+import Combine
 
 @main
 struct MirrorWorldApp: App {
@@ -43,6 +44,11 @@ class MirrorWorldViewModel: ObservableObject {
     @Published var processingProgress: Double = 0.0
     @Published var isLoading = false
     @Published var errorMessage: String?
+    @Published var generatedModelURL: URL?
+    
+    private let aiModelService = AIModelService()
+    private let unityLoader = UnityModelLoader()
+    private var cancellables = Set<AnyCancellable>()
     
     enum AppState {
         case welcome
@@ -50,6 +56,28 @@ class MirrorWorldViewModel: ObservableObject {
         case photoSelection
         case processing
         case unityScene
+    }
+    
+    init() {
+        setupBindings()
+    }
+    
+    private func setupBindings() {
+        // Bind AI service progress to view model
+        aiModelService.$progress
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.processingProgress, on: self)
+            .store(in: &cancellables)
+        
+        aiModelService.$errorMessage
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.errorMessage, on: self)
+            .store(in: &cancellables)
+        
+        aiModelService.$generatedModelURL
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.generatedModelURL, on: self)
+            .store(in: &cancellables)
     }
     
     func nextState() {
@@ -74,26 +102,55 @@ class MirrorWorldViewModel: ObservableObject {
         selectedImage = image
         isLoading = true
         
-        // Simulate API call to backend
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-            self.isLoading = false
-            self.nextState()
-        }
+        // Use real AI service instead of simulation
+        aiModelService.generateAvatar(from: image)
+            .receive(on: DispatchQueue.main)
+            .sink(
+                receiveCompletion: { [weak self] completion in
+                    self?.isLoading = false
+                    if case .failure(let error) = completion {
+                        self?.errorMessage = error.localizedDescription
+                    }
+                },
+                receiveValue: { [weak self] modelURL in
+                    self?.generatedModelURL = modelURL
+                    self?.nextState()
+                }
+            )
+            .store(in: &cancellables)
     }
     
     private func startProcessing() {
+        guard let image = selectedImage else { return }
+        
+        isLoading = true
         processingProgress = 0.0
         
-        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
-            self.processingProgress += 0.02
-            
-            if self.processingProgress >= 1.0 {
-                timer.invalidate()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    self.nextState()
+        // Start the AI processing pipeline
+        aiModelService.generateAvatar(from: image)
+            .receive(on: DispatchQueue.main)
+            .sink(
+                receiveCompletion: { [weak self] completion in
+                    self?.isLoading = false
+                    if case .failure(let error) = completion {
+                        self?.errorMessage = error.localizedDescription
+                    } else {
+                        // Processing completed successfully
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                            self?.nextState()
+                        }
+                    }
+                },
+                receiveValue: { [weak self] modelURL in
+                    self?.generatedModelURL = modelURL
                 }
-            }
-        }
+            )
+            .store(in: &cancellables)
+    }
+    
+    // Get current AI processing stage for UI display
+    var currentProcessingStage: String {
+        aiModelService.processingStage.rawValue
     }
 }
 
@@ -362,11 +419,14 @@ struct ProcessingView: View {
             }
             
             VStack(spacing: 15) {
+                // AI Processing Pipeline Visualization
+                ProcessingPipelineView(progress: viewModel.processingProgress)
+                
                 ProgressView(value: viewModel.processingProgress)
                     .progressViewStyle(LinearProgressViewStyle())
                     .scaleEffect(x: 1, y: 2, anchor: .center)
                 
-                Text(processingStageText)
+                Text(viewModel.currentProcessingStage)
                     .font(.headline)
                     .foregroundColor(.blue)
                 
@@ -375,24 +435,85 @@ struct ProcessingView: View {
                     .foregroundColor(.secondary)
             }
             
+            if let errorMessage = viewModel.errorMessage {
+                Text("Error: \(errorMessage)")
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .padding()
+            }
+            
             Spacer()
         }
         .padding()
     }
+}
+
+// MARK: - Processing Pipeline Visualization
+struct ProcessingPipelineView: View {
+    let progress: Double
     
-    private var processingStageText: String {
-        let progress = viewModel.processingProgress
-        
-        if progress < 0.2 {
-            return "Analyzing your photo..."
-        } else if progress < 0.4 {
-            return "Extracting facial features..."
-        } else if progress < 0.6 {
-            return "Building 3D mesh..."
-        } else if progress < 0.8 {
-            return "Adding textures..."
-        } else {
-            return "Finalizing your avatar..."
+    var body: some View {
+        HStack(spacing: 10) {
+            PipelineStageIcon(
+                icon: "photo",
+                title: "Segment",
+                isActive: progress > 0.1,
+                isCompleted: progress > 0.25
+            )
+            
+            PipelineStageIcon(
+                icon: "eye",
+                title: "Depth",
+                isActive: progress > 0.25,
+                isCompleted: progress > 0.4
+            )
+            
+            PipelineStageIcon(
+                icon: "cube",
+                title: "Mesh",
+                isActive: progress > 0.4,
+                isCompleted: progress > 0.6
+            )
+            
+            PipelineStageIcon(
+                icon: "paintbrush",
+                title: "Texture",
+                isActive: progress > 0.6,
+                isCompleted: progress > 0.8
+            )
+            
+            PipelineStageIcon(
+                icon: "face.smiling",
+                title: "Animate",
+                isActive: progress > 0.8,
+                isCompleted: progress >= 1.0
+            )
+        }
+        .padding()
+    }
+}
+
+struct PipelineStageIcon: View {
+    let icon: String
+    let title: String
+    let isActive: Bool
+    let isCompleted: Bool
+    
+    var body: some View {
+        VStack(spacing: 5) {
+            ZStack {
+                Circle()
+                    .fill(isCompleted ? Color.green : (isActive ? Color.blue : Color.gray))
+                    .frame(width: 40, height: 40)
+                
+                Image(systemName: isCompleted ? "checkmark" : icon)
+                    .foregroundColor(.white)
+                    .font(.system(size: 16, weight: .bold))
+            }
+            
+            Text(title)
+                .font(.caption)
+                .foregroundColor(isActive || isCompleted ? .primary : .secondary)
         }
     }
 }

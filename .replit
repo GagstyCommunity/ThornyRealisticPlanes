@@ -4,3 +4,15 @@ modules = ["swift"]
 
 [nix]
 channel = "stable-24_05"
+
+[workflows]
+runButton = "iOS Build"
+
+[[workflows.workflow]]
+name = "iOS Build"
+author = 43648992
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "xcodebuild -project MirrorWorld.xcodeproj -scheme MirrorWorld -destination 'platform=iOS Simulator,name=iPhone 14' build"
