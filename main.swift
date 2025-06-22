@@ -47,6 +47,8 @@ class MirrorWorldViewModel: ObservableObject {
     @Published var generatedModelURL: URL?
     
     private let aiModelService = AIModelService()
+    private let backendPipeline = BackendAIPipeline()
+    private let unitySceneController = UnityParkSceneController()
     private let unityLoader = UnityModelLoader()
     private var cancellables = Set<AnyCancellable>()
     
@@ -126,8 +128,8 @@ class MirrorWorldViewModel: ObservableObject {
         isLoading = true
         processingProgress = 0.0
         
-        // Start the AI processing pipeline
-        aiModelService.generateAvatar(from: image)
+        // Start the backend AI processing pipeline
+        backendPipeline.processPhotoTo3D(image: image)
             .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { [weak self] completion in
@@ -141,8 +143,10 @@ class MirrorWorldViewModel: ObservableObject {
                         }
                     }
                 },
-                receiveValue: { [weak self] modelURL in
-                    self?.generatedModelURL = modelURL
+                receiveValue: { [weak self] generatedAssets in
+                    self?.generatedModelURL = generatedAssets.modelURL
+                    // Store assets for Unity scene
+                    UserDefaults.standard.set(try? JSONEncoder().encode(generatedAssets), forKey: "generatedAssets")
                 }
             )
             .store(in: &cancellables)
@@ -150,7 +154,7 @@ class MirrorWorldViewModel: ObservableObject {
     
     // Get current AI processing stage for UI display
     var currentProcessingStage: String {
-        aiModelService.processingStage.rawValue
+        backendPipeline.currentStage.rawValue
     }
 }
 
@@ -521,43 +525,127 @@ struct PipelineStageIcon: View {
 // MARK: - Unity Scene View
 struct UnitySceneView: View {
     @ObservedObject var viewModel: MirrorWorldViewModel
+    @StateObject private var sceneController = UnityParkSceneController()
+    @State private var generatedAssets: BackendAIPipeline.GeneratedAssets?
     
     var body: some View {
-        VStack {
-            Text("Your 3D World")
-                .font(.title)
-                .fontWeight(.bold)
-                .padding()
-            
-            // Placeholder for Unity integration
-            ZStack {
-                Color.black
-                    .cornerRadius(20)
-                
-                VStack {
-                    Image(systemName: "cube.transparent")
-                        .font(.system(size: 60))
-                        .foregroundColor(.white)
+        VStack(spacing: 0) {
+            // Unity Scene Container
+            if let assets = generatedAssets {
+                UnityParkSceneWrapper(sceneController: sceneController, generatedAssets: assets)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ZStack {
+                    Color.black
+                        .cornerRadius(20)
                     
-                    Text("Unity Scene Loading...")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                    
-                    Text("Your 3D avatar will appear here")
-                        .font(.body)
-                        .foregroundColor(.gray)
+                    VStack {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .scaleEffect(2)
+                        
+                        Text("Loading Your 3D World...")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .padding(.top)
+                        
+                        Text("Preparing photorealistic park scene")
+                            .font(.body)
+                            .foregroundColor(.gray)
+                    }
                 }
+                .frame(height: 400)
+                .padding()
             }
-            .frame(height: 400)
-            .padding()
             
-            Button("Start Over") {
-                viewModel.selectedImage = nil
-                viewModel.processingProgress = 0.0
-                viewModel.currentState = .welcome
+            // Scene Controls
+            VStack(spacing: 15) {
+                HStack {
+                    Text("Your 3D Avatar")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    
+                    Spacer()
+                    
+                    if sceneController.avatarLoaded {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                    }
+                }
+                
+                // Camera Controls
+                Picker("Camera Mode", selection: Binding(
+                    get: { sceneController.cameraMode },
+                    set: { sceneController.setCameraMode($0) }
+                )) {
+                    Text("Cinematic").tag(UnityParkSceneController.CameraMode.cinematic)
+                    Text("Interactive").tag(UnityParkSceneController.CameraMode.interactive)
+                    Text("Fixed").tag(UnityParkSceneController.CameraMode.fixed)
+                }
+                .pickerStyle(SegmentedPickerStyle())
+                
+                // Environment Controls
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text("Time of Day")
+                            .font(.caption)
+                        Picker("Time", selection: Binding(
+                            get: { sceneController.environmentSettings.timeOfDay },
+                            set: { 
+                                var settings = sceneController.environmentSettings
+                                settings.timeOfDay = $0
+                                sceneController.updateEnvironment(settings)
+                            }
+                        )) {
+                            ForEach(UnityParkSceneController.TimeOfDay.allCases, id: \.self) { time in
+                                Text(time.rawValue.capitalized).tag(time)
+                            }
+                        }
+                        .pickerStyle(MenuPickerStyle())
+                    }
+                    
+                    Spacer()
+                    
+                    VStack(alignment: .leading) {
+                        Text("Weather")
+                            .font(.caption)
+                        Picker("Weather", selection: Binding(
+                            get: { sceneController.environmentSettings.weatherCondition },
+                            set: { 
+                                var settings = sceneController.environmentSettings
+                                settings.weatherCondition = $0
+                                sceneController.updateEnvironment(settings)
+                            }
+                        )) {
+                            ForEach(UnityParkSceneController.Weather.allCases, id: \.self) { weather in
+                                Text(weather.rawValue.replacingOccurrences(of: "_", with: " ").capitalized).tag(weather)
+                            }
+                        }
+                        .pickerStyle(MenuPickerStyle())
+                    }
+                }
+                
+                Button("Create New Avatar") {
+                    sceneController.cleanup()
+                    viewModel.selectedImage = nil
+                    viewModel.processingProgress = 0.0
+                    viewModel.currentState = .welcome
+                }
+                .buttonStyle(SecondaryButtonStyle())
             }
-            .buttonStyle(SecondaryButtonStyle())
             .padding()
+            .background(Color(.systemGray6))
+        }
+        .onAppear {
+            loadGeneratedAssets()
+        }
+    }
+    
+    private func loadGeneratedAssets() {
+        // Load the generated assets from UserDefaults or viewModel
+        if let data = UserDefaults.standard.data(forKey: "generatedAssets"),
+           let assets = try? JSONDecoder().decode(BackendAIPipeline.GeneratedAssets.self, from: data) {
+            generatedAssets = assets
         }
     }
 }
